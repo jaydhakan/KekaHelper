@@ -54,6 +54,14 @@ class KekaSpider(scrapy.Spider):
             )
         return timestamp_obj
 
+    @staticmethod
+    def is_half_day(last_entry: dict):
+        last_entry.get('isFirstHalfLeave', False)
+        return (
+            last_entry.get('isFirstHalfLeave', False) or
+            last_entry.get('isSecondHalfLeave', False)
+        )
+
     def parse_daily_hours(self, response):
         try:
             if response.status == 200:
@@ -61,11 +69,16 @@ class KekaSpider(scrapy.Spider):
 
                 if data.get('data'):
                     last_entry = data['data'][-1]
-                    # with open('test.json', 'w') as json_file:
-                    #     dump(last_entry, json_file)
                     break_time = (
                         last_entry.get('breakDurationInHHMM', None).split(':')
                     )
+
+                    if self.is_half_day(last_entry):
+                        self.total_office_time = timedelta(hours=4, minutes=15)
+                        self.partial_office_time = timedelta(
+                            hours=2, minutes=45
+                        )
+
                     break_hour = int(break_time[0])
                     break_minute = int(break_time[1])
                     break_time = timedelta(

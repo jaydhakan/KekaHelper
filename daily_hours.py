@@ -19,7 +19,7 @@ class KekaSpider(scrapy.Spider):
     datetime_format = '%Y-%m-%dT%H:%M:%S'
     datetime_format_12_hour = '"%I:%M:%S %p"'
     total_office_time = timedelta(hours=8, minutes=30)
-    partial_office_time = timedelta(hours=7, minutes=00)
+    partial_office_time = timedelta(hours=6, minutes=55)
 
     def start_requests(self):
         url = (

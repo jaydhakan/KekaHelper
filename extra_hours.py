@@ -1,19 +1,14 @@
 import ctypes
-import json
 import subprocess
 from datetime import datetime, timedelta
 from sys import platform
 
-import scrapy
-from scrapy import Request
-from scrapy.crawler import CrawlerProcess
-from scrapy.utils.project import get_project_settings
+import requests
 
 from util import auth_token_helpers
 
 
-class KekaSpider(scrapy.Spider):
-    name = 'keka_spider'
+class KekaExtraHoursCalculator:
     working_days = 0
     total_office_time = timedelta(hours=8, minutes=30)
     min_office_time = timedelta(hours=8, minutes=20)
@@ -24,18 +19,6 @@ class KekaSpider(scrapy.Spider):
     from_date = datetime(current_year, current_month, 1).strftime("%Y-%m-%d")
     to_date = datetime.now().date() - timedelta(days=1)
 
-    def start_requests(self):
-        url = (
-            f'https://kevit.keka.com/k/attendance/api/mytime/attendance'
-            f'/lastweekstats?fromDate={self.from_date}&toDate={self.to_date}'
-        )
-        authorization_token = auth_token_helpers.read_auth_token_from_file()
-        print(authorization_token)
-        headers = {
-            'authorization': f'{authorization_token}'
-        }
-        yield Request(url=url, headers=headers, callback=self.parse_extra_hours)
-
     @staticmethod
     def __notification(title, message):
         if platform == 'linux':
@@ -43,6 +26,51 @@ class KekaSpider(scrapy.Spider):
 
         elif platform == 'win32':
             ctypes.windll.user32.MessageBoxW(0, message, title, 1)
+
+    @staticmethod
+    def check_if_valid_response(response):
+        return (
+            response.status_code == 200 and
+            'data' in response.json() and
+            'myStats' in response.json()['data'] and
+            'workingDays' in response.json()['data']['myStats'] and
+            'averageHoursPerDayInHHMM' in response.json()['data']['myStats']
+        )
+
+    def fetch_response(self):
+        try:
+            url = (
+                f'https://kevit.keka.com/k/attendance/api/mytime/attendance/'
+                f'lastweekstats?fromDate={self.from_date}&toDate={self.to_date}'
+            )
+            authorization_token = auth_token_helpers.read_auth_token_from_file()
+            print(f'Authorization_token:\n{authorization_token}\n')
+            headers = {
+                'authorization': f'{authorization_token}'
+            }
+            response = requests.get(url=url, headers=headers)
+            if self.check_if_valid_response(response):
+                return response
+            else:
+                print(
+                    f'Failed to get response from Keka API call, '
+                    f'response: {response.status_code}, {response.text}'
+                )
+                self.__notification(
+                    'Failed',
+                    f'Keka API call failed, '
+                    f'response: {response.status_code}, {response.text}'
+                )
+                exit()
+        except Exception as err:
+            print(
+                f'Unknown ERROR when getting response from Keka API call, '
+                f'ERROR: {err}'
+            )
+            self.__notification(
+                'ERROR', f'Keka API call failed, ERROR: {str(err)}'
+            )
+            exit()
 
     def calculate_extra_time_and_get_message(self, office_time: timedelta):
         extra_time = self.daily_avg - office_time
@@ -66,58 +94,48 @@ class KekaSpider(scrapy.Spider):
             )
         return notification_title, notification_message
 
-    def parse_extra_hours(self, response):
-        if response.status == 200:
-            data = json.loads(response.text)
+    def fetch_your_extra_hours(self):
+        try:
+            response = self.fetch_response()
+            mystats = response.json()['data']['myStats']
+            self.working_days = mystats.get('workingDays')
+            daily_avg = mystats.get('averageHoursPerDayInHHMM').split(' ')
+            daily_hours = int(daily_avg[0][:-1])
 
-            if data.get('data'):
-                data = data.get('data')
-                mystats = data.get('myStats')
-                self.working_days = mystats.get('workingDays')
-                daily_avg = mystats.get('averageHoursPerDayInHHMM').split(' ')
-                daily_hours = int(daily_avg[0][:-1])
-
-                daily_minutes = 0
-                if len(daily_avg) > 1:
-                    daily_minutes = int(daily_avg[1][:-1])
-                self.daily_avg = timedelta(
-                    hours=daily_hours, minutes=daily_minutes
-                )
-
-                notification_title, notification_message = (
-                    self.calculate_extra_time_and_get_message(
-                        self.total_office_time
-                    ))
-
-                notification_title_min, notification_message_min = (
-                    self.calculate_extra_time_and_get_message(
-                        self.min_office_time
-                    ))
-
-                self.__notification(
-                    notification_title_min,
-                    notification_message_min
-                )
-                return self.__notification(
-                    notification_title,
-                    notification_message
-                )
-
-            return self.__notification(
-                'Request failed',
-                f'Failed to get data'
+            daily_minutes = 0
+            if len(daily_avg) > 1:
+                daily_minutes = int(daily_avg[1][:-1])
+            self.daily_avg = timedelta(
+                hours=daily_hours, minutes=daily_minutes
             )
-        return self.__notification(
-            'Request failed',
-            f'Status code {response.status}'
-        )
 
+            notification_title, notification_message = (
+                self.calculate_extra_time_and_get_message(
+                    self.total_office_time
+                ))
+
+            notification_title_min, notification_message_min = (
+                self.calculate_extra_time_and_get_message(
+                    self.min_office_time
+                ))
+
+            self.__notification(
+                notification_title,
+                notification_message
+            )
+            return self.__notification(
+                notification_title_min,
+                notification_message_min
+            )
+        except Exception as error:
+            print(f'Failed to calculate your extra hours, ERROR: {error}')
+            self.__notification(
+                'ERROR', 'Failed to calculate your extra hours, '
+                         f'ERROR: {str(error)}'
+            )
+
+
+extra_hours_calculator = KekaExtraHoursCalculator()
 
 if __name__ == '__main__':
-    def run_spider_manually(spider):
-        process = CrawlerProcess(get_project_settings())
-        process.crawl(spider)
-        process.start()
-
-
-    run_spider_manually(KekaSpider)
+    extra_hours_calculator.fetch_your_extra_hours()

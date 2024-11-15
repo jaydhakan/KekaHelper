@@ -2,7 +2,7 @@ import asyncio
 import ctypes
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from os.path import exists
 from json import loads
 from sys import platform
 from time import sleep
@@ -13,7 +13,6 @@ from playwright.async_api import Playwright, async_playwright
 class AuthToken:
     ROOT_DIR_PATH = sys.path[0]
     token_file_path = f'{ROOT_DIR_PATH}/token_file.txt'
-    time_path = f'{ROOT_DIR_PATH}/last_token_scrap_time.txt'
 
     @staticmethod
     def __notification(title, message):
@@ -45,45 +44,35 @@ class AuthToken:
         )
         auth_token = loads(auth_token)
         if auth_token:
-            print(f'Auth token parsed:: {auth_token}\n')
-            with open(self.token_file_path, "r+") as token_file:
-                self.__notification('Previous Auth Token', token_file.read())
-                token_file.seek(0)
+            print(f'Successfully scraped auth token::\n{auth_token}\n')
+            if not exists(self.token_file_path):
+                with open(self.token_file_path, "w") as token_file:
+                    token_file.write(f'Bearer {auth_token}')
+            else:
+                with open(self.token_file_path, "r+") as token_file:
+                    token_file.seek(0)
                 token_file.write(f'Bearer {auth_token}')
-                self.__notification('New Auth Token', f'Bearer {auth_token}')
         else:
             self.__notification('Failure', 'Failed to get Auth Token')
             raise Exception('Failed to get Auth Token')
         await browser.close()
-        print('\nDriver closed')
+        print('\nDriver closed\n\n')
         return auth_token
 
     async def get_auth_token_dynamically(self):
         async with async_playwright() as playwright:
             await self.fetch_auth_token(playwright)
 
-    def check_need_to_scrap_token(self):
-        with open(self.time_path, "r+") as token_time_file:
-            last_scrap_time = str(token_time_file.readline()).replace('\n', '')
-            try:
-                last_scrap_time = datetime.strptime(last_scrap_time, "%Y-%m-%d")
-            except Exception as error:
-                self.__notification(
-                    'Error while reading last token scrap time.', str(error)
-                )
-                last_scrap_time = datetime(year=2024, month=1, day=1)
-            if datetime.now() - last_scrap_time > timedelta(hours=23):
-                asyncio.run(self.get_auth_token_dynamically())
-                token_time_file.seek(0)
-                token_time_file.write(str(datetime.now().date()))
-
-    def read_auth_token_from_file(self) -> str:
-        self.check_need_to_scrap_token()
-        with open(self.token_file_path, "r") as token_file:
+    def read_auth_token_from_file(
+        self, fetch_new_api_token: bool = False
+    ) -> str:
+        if fetch_new_api_token:
+            asyncio.run(self.get_auth_token_dynamically())
+        with open(self.token_file_path, "r+") as token_file:
             authorization_token = token_file.read()
         return authorization_token
 
 
 auth_token_helpers = AuthToken()
 if __name__ == '__main__':
-    auth_token_helpers.check_need_to_scrap_token()
+    auth_token_helpers.read_auth_token_from_file(fetch_new_api_token=True)

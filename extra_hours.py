@@ -2,6 +2,7 @@ import ctypes
 import subprocess
 from datetime import datetime, timedelta
 from sys import platform
+from time import sleep
 
 import requests
 
@@ -26,6 +27,7 @@ class KekaExtraHoursCalculator:
 
         elif platform == 'win32':
             ctypes.windll.user32.MessageBoxW(0, message, title, 1)
+        sleep(2)
 
     @staticmethod
     def check_if_valid_response(response):
@@ -37,13 +39,15 @@ class KekaExtraHoursCalculator:
             'averageHoursPerDayInHHMM' in response.json()['data']['myStats']
         )
 
-    def fetch_response(self):
+    def fetch_response(self, fetch_new_api_token: bool = False):
         try:
             url = (
                 f'https://kevit.keka.com/k/attendance/api/mytime/attendance/'
                 f'lastweekstats?fromDate={self.from_date}&toDate={self.to_date}'
             )
-            authorization_token = auth_token_helpers.read_auth_token_from_file()
+            authorization_token = auth_token_helpers.read_auth_token_from_file(
+                fetch_new_api_token
+            )
             print(f'Authorization_token:\n{authorization_token}\n')
             headers = {
                 'authorization': f'{authorization_token}'
@@ -52,6 +56,8 @@ class KekaExtraHoursCalculator:
             if self.check_if_valid_response(response):
                 return response
             else:
+                if not fetch_new_api_token:
+                    return self.fetch_response(fetch_new_api_token = True)
                 print(
                     f'Failed to get response from Keka API call, '
                     f'response: {response.status_code}, {response.text}'
@@ -63,6 +69,8 @@ class KekaExtraHoursCalculator:
                 )
                 exit()
         except Exception as err:
+            if not fetch_new_api_token:
+                return self.fetch_response(fetch_new_api_token=True)
             print(
                 f'Unknown ERROR when getting response from Keka API call, '
                 f'ERROR: {err}'

@@ -33,31 +33,36 @@ class AuthToken:
             user_data_dir=chrome_path,
             headless=True
         )
-        print('Driver started\n\n')
-        page = await browser.new_page()
-        url = 'https://kevit.keka.com/#/me/attendance/logs'
-        await page.goto(url)
-        sleep(2)
-        print('Site opened, fetching local storage data\n')
-        auth_token = await page.evaluate(
-            'JSON.stringify(window.localStorage.getItem("access_token"))'
-        )
-        auth_token = loads(auth_token)
-        if auth_token:
-            print(f'Successfully scraped auth token::\n{auth_token}\n')
-            if not exists(self.token_file_path):
-                with open(self.token_file_path, "w") as token_file:
-                    token_file.write(f'Bearer {auth_token}')
+        try:
+            print('Driver started\n\n')
+            page = await browser.new_page()
+            url = 'https://kevit.keka.com/#/me/attendance/logs'
+            await page.goto(url)
+            sleep(2)
+            print('Site opened, fetching local storage data\n')
+            auth_token = await page.evaluate(
+                'JSON.stringify(window.localStorage.getItem("access_token"))'
+            )
+            auth_token = loads(auth_token)
+            if auth_token:
+                print(f'Successfully scraped auth token::\n{auth_token}\n')
+                if not exists(self.token_file_path):
+                    with open(self.token_file_path, "w") as token_file:
+                        token_file.write(f'Bearer {auth_token}')
+                else:
+                    with open(self.token_file_path, "r+") as token_file:
+                        token_file.seek(0)
+                        token_file.write(f'Bearer {auth_token}')
             else:
-                with open(self.token_file_path, "r+") as token_file:
-                    token_file.seek(0)
-                token_file.write(f'Bearer {auth_token}')
-        else:
-            self.__notification('Failure', 'Failed to get Auth Token')
-            raise Exception('Failed to get Auth Token')
-        await browser.close()
-        print('\nDriver closed\n\n')
-        return auth_token
+                self.__notification('Failure', 'Failed to get Auth Token')
+                raise Exception('Failed to get Auth Token')
+            await browser.close()
+            print('\nDriver closed\n\n')
+            return auth_token
+        finally:
+            await browser.close()
+            print('\nDriver closed\n\n')
+            return None
 
     async def get_auth_token_dynamically(self):
         async with async_playwright() as playwright:

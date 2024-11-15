@@ -1,54 +1,91 @@
 import ctypes
-import datetime
 import subprocess
 import time
 from datetime import datetime, timedelta
-from json import loads
 from sys import platform
 
-import scrapy
-from scrapy import Request
-from scrapy.crawler import CrawlerProcess
-from scrapy.utils.project import get_project_settings
+import requests
 
 from util import auth_token_helpers
 
 
-class KekaSpider(scrapy.Spider):
-    name = 'keka_spider'
+class KekaDailyHoursCalculator:
     datetime_format = '%Y-%m-%dT%H:%M:%S'
     datetime_format_12_hour = '"%I:%M:%S %p"'
     total_office_time = timedelta(hours=8, minutes=30)
     partial_office_time = timedelta(hours=6, minutes=55)
 
-    def start_requests(self):
-        url = (
-            "https://kevit.keka.com/k/attendance/api/mytime/attendance/summary"
-        )
-        authorization_token = auth_token_helpers.read_auth_token_from_file()
-        print(authorization_token)
-        headers = {
-            'authorization': f'{authorization_token}'
-        }
-        yield Request(url=url, headers=headers, callback=self.parse_daily_hours)
-
     @staticmethod
     def __notification(title, message):
         if platform == 'linux':
             subprocess.run(['notify-send', title, message])
-
         elif platform == 'win32':
             ctypes.windll.user32.MessageBoxW(0, message, title, 1)
         time.sleep(1)
 
     @staticmethod
-    def convert_str_to_datetime(time_str: str):
+    def check_if_valid_response(response):
+        return (
+            response.status_code == 200 and
+            'data' in response.json() and
+            'breakDurationInHHMM' in response.json()['data'][-1]
+        )
+
+    def fetch_response(self, fetch_new_api_token: bool = False):
+        try:
+            url = (
+                "https://kevit.keka.com"
+                "/k/attendance/api/mytime/attendance/summary"
+            )
+            authorization_token = auth_token_helpers.read_auth_token_from_file(
+                fetch_new_api_token
+            )
+            print(f'Authorization_token:\n{authorization_token}\n')
+            headers = {
+                'authorization': f'{authorization_token}'
+            }
+            response = requests.get(url=url, headers=headers)
+            if self.check_if_valid_response(response):
+                return response
+            else:
+                if not fetch_new_api_token:
+                    return self.fetch_response(fetch_new_api_token=True)
+                print(
+                    f'Failed to get response from Keka API call, '
+                    f'response: {response.status_code}, {response.text}'
+                )
+                self.__notification(
+                    'Failed',
+                    f'Keka API call failed, '
+                    f'response: {response.status_code}, {response.text}'
+                )
+                exit()
+        except Exception as err:
+            if not fetch_new_api_token:
+                return self.fetch_response(fetch_new_api_token=True)
+            print(
+                f'Unknown ERROR when getting response from Keka API call, '
+                f'ERROR: {str(err)}'
+            )
+            self.__notification(
+                'ERROR', f'Keka API call failed, ERROR: {str(err)}'
+            )
+            exit()
+
+    def convert_str_to_datetime(self, time_str: str):
         try:
             timestamp_obj = datetime.strptime(
                 time_str, '%Y-%m-%dT%H:%M:%S'
             )
-        except Exception as error:
-            print(error)
+        except Exception:
+            print(
+                f'I guess you are in work from home. ENJOIII!!!!!, '
+                'Converting string to datetime with modified format.'
+            )
+            self.__notification(
+                'Work from home',
+                'I guess you are in work from home. ENJOIII!!!!!'
+            )
             timestamp_obj = datetime.strptime(
                 time_str[:-8], '%Y-%m-%dT%H:%M:%S'
             )
@@ -56,127 +93,63 @@ class KekaSpider(scrapy.Spider):
 
     @staticmethod
     def is_half_day(last_entry: dict):
-        last_entry.get('isFirstHalfLeave', False)
         return (
             last_entry.get('isFirstHalfLeave', False) or
             last_entry.get('isSecondHalfLeave', False)
         )
 
-    def parse_daily_hours(self, response):
+    def calculate_daily_hours(self):
         try:
-            if response.status == 200:
-                data = loads(response.text)
+            response = self.fetch_response()
+            last_entry = response.json()['data'][-1]
+            break_time = last_entry.get('breakDurationInHHMM', '0:0').split(
+                ':'
+            )
 
-                if data.get('data'):
-                    last_entry = data['data'][-1]
-                    break_time = (
-                        last_entry.get('breakDurationInHHMM', None).split(':')
-                    )
+            if self.is_half_day(last_entry):
+                self.total_office_time = timedelta(hours=4, minutes=15)
+                self.partial_office_time = timedelta(hours=2, minutes=45)
 
-                    if self.is_half_day(last_entry):
-                        self.total_office_time = timedelta(hours=4, minutes=15)
-                        self.partial_office_time = timedelta(
-                            hours=2, minutes=45
-                        )
+            break_hour = int(break_time[0])
+            break_minute = int(break_time[1])
+            break_time = timedelta(hours=break_hour, minutes=break_minute)
 
-                    break_hour = int(break_time[0])
-                    break_minute = int(break_time[1])
-                    break_time = timedelta(
-                        hours=break_hour,
-                        minutes=break_minute
-                    )
-                    first_log = self.convert_str_to_datetime(
-                        last_entry.get('originalTimeEntries')[0][
-                            'actualTimestamp']
-                    )
-                    time_spent = (
-                        datetime.now() - first_log - break_time
-                    )
+            first_log = self.convert_str_to_datetime(
+                last_entry.get('originalTimeEntries')[0]['actualTimestamp']
+            )
+            time_spent = datetime.now() - first_log - break_time
 
-                    # region Manual Calculation of TIME SPENT
-                    # logs = []
-                    # for entry in last_entry.get('originalTimeEntries', []):
-                    #     actual_timestamp = entry.get('actualTimestamp', None)
-                    #     if actual_timestamp is not None:
-                    #         logs.append(actual_timestamp)
-                    #
-                    # # logs.pop()
-                    # print(logs)
-                    # time_spent = timedelta(hours=0, minutes=0)
-                    # if len(logs) == 1:
-                    #     time_spent += (
-                    #         datetime.now() -
-                    #         datetime.strptime(logs[0], self.datetime_format)
-                    #     )
-                    #
-                    # else:
-                    #     i = 0
-                    #     while i < len(logs):
-                    #         if i == len(logs) - 1:
-                    #             time_spent += (
-                    #                 datetime.now() -
-                    #                 datetime.strptime(
-                    #                     logs[-1],
-                    #                     self.datetime_format
-                    #                 )
-                    #             )
-                    #             break
-                    #
-                    #         time_spent += (
-                    #             datetime.strptime(
-                    #                 logs[i + 1],
-                    #                 self.datetime_format
-                    #             ) -
-                    #             datetime.strptime(logs[i],
-                    #             self.datetime_format)
-                    #         )
-                    #         i += 2
-                    # endregion
+            print(f'Gross time spent till now:: {time_spent}\n')
+            total_time_leave = (
+                (datetime.now() + (self.total_office_time - time_spent))
+            ).strftime(self.datetime_format_12_hour)
 
-                    print(f'Time spent till now:: {time_spent}')
-                    total_time_leave = ((datetime.now() + (
-                        self.total_office_time - time_spent))
-                    ).strftime(self.datetime_format_12_hour)
+            partial_time_leave = (
+                (datetime.now() + (self.partial_office_time - time_spent))
+            ).strftime(self.datetime_format_12_hour)
 
-                    partial_time_leave = ((datetime.now() + (
-                        self.partial_office_time - time_spent))
-                    ).strftime(self.datetime_format_12_hour)
+            current_time = (
+                (datetime.now().time()).strftime(self.datetime_format_12_hour)
+            )
+            notification_title = (
+                f'Office Time Reminder. Time ~ {current_time}'
+            )
+            notification_message = (
+                f'You can close at {total_time_leave} or {partial_time_leave}.'
+            )
 
-                    current_time = (datetime.now().time()).strftime(
-                        self.datetime_format_12_hour
-                    )
-                    notification_title = (
-                        f'Office Time Reminder. Time ~ {current_time}'
-                    )
-                    notification_message = (
-                        f'You can close at {total_time_leave}'
-                        f' or {partial_time_leave}.'
-                    )
-
-                    print(f'Logout time {total_time_leave}')
-                    return self.__notification(
-                        notification_title, notification_message
-                    )
-
-                return self.__notification(
-                    'Request failed', f'Failed to get data'
-                )
-
+            print(f'You can logout on {total_time_leave}')
             return self.__notification(
-                'Request failed', f'Status code {response.status}'
+                notification_title, notification_message
             )
         except Exception as err:
-            print(err)
+            print(f'ERROR: {str(err)}')
             self.__notification(
-                f'Error: ', str(err)
+                'Error', f'Failed to calculate daily hours: {str(err)}'
             )
 
 
+daily_hours_calculator = KekaDailyHoursCalculator()
+
 if __name__ == '__main__':
-    def run_spider_manually(spider):
-        process = CrawlerProcess(get_project_settings())
-        process.crawl(spider)
-        process.start()
-
-
-    run_spider_manually(KekaSpider)
+    daily_hours_calculator.calculate_daily_hours()

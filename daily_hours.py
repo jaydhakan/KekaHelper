@@ -2,6 +2,8 @@ import ctypes
 import subprocess
 import time
 from datetime import datetime, timedelta
+from json import dumps, loads
+from os.path import exists
 from sys import platform
 
 import requests
@@ -14,6 +16,7 @@ class KekaDailyHoursCalculator:
     datetime_format_12_hour = '"%I:%M:%S %p"'
     total_office_time = timedelta(hours=8, minutes=30)
     partial_office_time = timedelta(hours=6, minutes=55)
+    time_spent_file_path = 'time_spent.json'
 
     @staticmethod
     def __notification(title, message):
@@ -32,45 +35,46 @@ class KekaDailyHoursCalculator:
         )
 
     def fetch_response(self, fetch_new_api_token: bool = False):
-        try:
-            url = (
-                "https://kevit.keka.com"
-                "/k/attendance/api/mytime/attendance/summary"
-            )
-            authorization_token = auth_token_helpers.read_auth_token_from_file(
-                fetch_new_api_token
-            )
-            print(f'Authorization_token:\n{authorization_token}\n')
-            headers = {
-                'authorization': f'{authorization_token}'
-            }
-            response = requests.get(url=url, headers=headers)
-            if self.check_if_valid_response(response):
-                return response
-            else:
-                if not fetch_new_api_token:
+        for retry_count in range(1, 4):
+            try:
+                url = (
+                    "https://kevit.keka.com"
+                    "/k/attendance/api/mytime/attendance/summary"
+                )
+                authorization_token = (
+                    auth_token_helpers.read_auth_token_from_file(
+                        fetch_new_api_token
+                    ))
+                print(f'Authorization_token:\n{authorization_token}\n')
+                headers = {
+                    'authorization': f'{authorization_token}'
+                }
+                response = requests.get(url=url, headers=headers)
+                if self.check_if_valid_response(response):
+                    return response
+                else:
+                    if not fetch_new_api_token and retry_count == 3:
+                        return self.fetch_response(fetch_new_api_token=True)
+                    print(
+                        f'Failed to get response from Keka API call, '
+                        f'response: {response.status_code}, {response.text}'
+                    )
+                    self.__notification(
+                        'Failed',
+                        f'Keka API call failed, '
+                        f'response: {response.status_code}, {response.text}'
+                    )
+            except Exception as err:
+                if not fetch_new_api_token and retry_count == 3:
                     return self.fetch_response(fetch_new_api_token=True)
                 print(
-                    f'Failed to get response from Keka API call, '
-                    f'response: {response.status_code}, {response.text}'
+                    f'Unknown ERROR when getting response from Keka API call, '
+                    f'ERROR: {str(err)}'
                 )
                 self.__notification(
-                    'Failed',
-                    f'Keka API call failed, '
-                    f'response: {response.status_code}, {response.text}'
+                    'ERROR', f'Keka API call failed, ERROR: {str(err)}'
                 )
-                exit()
-        except Exception as err:
-            if not fetch_new_api_token:
-                return self.fetch_response(fetch_new_api_token=True)
-            print(
-                f'Unknown ERROR when getting response from Keka API call, '
-                f'ERROR: {str(err)}'
-            )
-            self.__notification(
-                'ERROR', f'Keka API call failed, ERROR: {str(err)}'
-            )
-            exit()
+        exit()
 
     def convert_str_to_datetime(self, time_str: str):
         try:
@@ -100,26 +104,61 @@ class KekaDailyHoursCalculator:
 
     def calculate_daily_hours(self):
         try:
-            response = self.fetch_response()
-            last_entry = response.json()['data'][-1]
-            break_time = last_entry.get('breakDurationInHHMM', '0:0').split(
-                ':'
-            )
+            time_spent = None
+            try:
+                if exists(self.time_spent_file_path):
+                    with open(self.time_spent_file_path, 'r') as file:
+                        data = loads(file.read())
+                        if data.get('date') == str(datetime.now().date()):
+                            time_spent = datetime.strptime(
+                                data.get('time_spent'), '%H:%M:%S.%f'
+                            )
+                            time_spent = timedelta(
+                                hours=time_spent.hour,
+                                minutes=time_spent.minute,
+                                seconds=time_spent.second,
+                                microseconds=time_spent.microsecond
+                            )
+                            print(
+                                f'Taken the Effective time spent '
+                                f'of today from json file.'
+                            )
+            except Exception as error:
+                print(
+                    f'Got some error while fetching time from json file, '
+                    f'ERROR: {error}\n'
+                )
+            if time_spent is None:
+                response = self.fetch_response()
+                last_entry = response.json()['data'][-1]
+                break_time = last_entry.get('breakDurationInHHMM', '0:0').split(
+                    ':'
+                )
 
-            if self.is_half_day(last_entry):
-                self.total_office_time = timedelta(hours=4, minutes=15)
-                self.partial_office_time = timedelta(hours=2, minutes=45)
+                if self.is_half_day(last_entry):
+                    self.total_office_time = timedelta(hours=4, minutes=15)
+                    self.partial_office_time = timedelta(hours=2, minutes=45)
 
-            break_hour = int(break_time[0])
-            break_minute = int(break_time[1])
-            break_time = timedelta(hours=break_hour, minutes=break_minute)
+                break_hour = int(break_time[0])
+                break_minute = int(break_time[1])
+                break_time = timedelta(hours=break_hour, minutes=break_minute)
 
-            first_log = self.convert_str_to_datetime(
-                last_entry.get('originalTimeEntries')[0]['actualTimestamp']
-            )
-            time_spent = datetime.now() - first_log - break_time
+                first_log = self.convert_str_to_datetime(
+                    last_entry.get('originalTimeEntries')[0]['actualTimestamp']
+                )
+                time_spent = datetime.now() - first_log - break_time
 
-            print(f'Gross time spent till now:: {time_spent}\n')
+                with open(self.time_spent_file_path, 'w+') as file:
+                    file.write(
+                        dumps(
+                            {
+                                'date': str(datetime.now().date()),
+                                'time_spent': str(time_spent)
+                            }
+                        )
+                    )
+
+            print(f'Effective time spent till now:: {time_spent}\n')
             total_time_leave = (
                 (datetime.now() + (self.total_office_time - time_spent))
             ).strftime(self.datetime_format_12_hour)

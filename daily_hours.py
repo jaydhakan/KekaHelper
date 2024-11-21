@@ -104,61 +104,25 @@ class KekaDailyHoursCalculator:
 
     def calculate_daily_hours(self):
         try:
-            time_spent = None
-            try:
-                if exists(self.time_spent_file_path):
-                    with open(self.time_spent_file_path, 'r') as file:
-                        data = loads(file.read())
-                        if data.get('date') == str(datetime.now().date()):
-                            time_spent = datetime.strptime(
-                                data.get('time_spent'), '%H:%M:%S.%f'
-                            )
-                            time_spent = timedelta(
-                                hours=time_spent.hour,
-                                minutes=time_spent.minute,
-                                seconds=time_spent.second,
-                                microseconds=time_spent.microsecond
-                            )
-                            print(
-                                f'Taken the Effective time spent '
-                                f'of today from json file.'
-                            )
-            except Exception as error:
-                print(
-                    f'Got some error while fetching time from json file, '
-                    f'ERROR: {error}\n'
-                )
-            if time_spent is None:
-                response = self.fetch_response()
-                last_entry = response.json()['data'][-1]
-                break_time = last_entry.get('breakDurationInHHMM', '0:0').split(
-                    ':'
-                )
+            response = self.fetch_response()
+            last_entry = response.json()['data'][-1]
+            break_time = last_entry.get('breakDurationInHHMM', '0:0').split(
+                ':'
+            )
 
-                if self.is_half_day(last_entry):
-                    self.total_office_time = timedelta(hours=4, minutes=15)
-                    self.partial_office_time = timedelta(hours=2, minutes=45)
+            if self.is_half_day(last_entry):
+                self.total_office_time = timedelta(hours=4, minutes=15)
+                self.partial_office_time = timedelta(hours=2, minutes=45)
 
-                break_hour = int(break_time[0])
-                break_minute = int(break_time[1])
-                break_time = timedelta(hours=break_hour, minutes=break_minute)
+            break_hour = int(break_time[0])
+            break_minute = int(break_time[1])
+            break_time = timedelta(hours=break_hour, minutes=break_minute)
 
-                first_log = self.convert_str_to_datetime(
-                    last_entry.get('originalTimeEntries')[0]['actualTimestamp']
-                )
-                time_spent = datetime.now() - first_log - break_time
+            first_log = self.convert_str_to_datetime(
+                last_entry.get('originalTimeEntries')[0]['actualTimestamp']
+            )
+            time_spent = datetime.now() - first_log - break_time
 
-                with open(self.time_spent_file_path, 'w+') as file:
-                    file.write(
-                        dumps(
-                            {
-                                'date': str(datetime.now().date()),
-                                'time_spent': str(time_spent)
-                            }
-                        )
-                    )
-
-            print(f'Effective time spent till now:: {time_spent}\n')
             total_time_leave = (
                 (datetime.now() + (self.total_office_time - time_spent))
             ).strftime(self.datetime_format_12_hour)
@@ -192,3 +156,4 @@ daily_hours_calculator = KekaDailyHoursCalculator()
 
 if __name__ == '__main__':
     daily_hours_calculator.calculate_daily_hours()
+

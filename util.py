@@ -2,11 +2,12 @@ import asyncio
 import ctypes
 import subprocess
 import sys
-from os.path import exists
 from json import loads
+from os.path import exists
 from sys import platform
 from time import sleep
 
+import urllib3
 from playwright.async_api import Playwright, async_playwright
 
 
@@ -24,6 +25,9 @@ class AuthToken:
         sleep(1)
 
     async def fetch_auth_token(self, playwright: Playwright):
+        if not self.check_internet():
+            self.__notification('Failed!!', 'No internet connection!!')
+            exit()
         self.__notification(
             'Scraping new auth token.', ' This can take up-to 10-15 seconds'
         )
@@ -76,6 +80,20 @@ class AuthToken:
         with open(self.token_file_path, "r+") as token_file:
             authorization_token = token_file.read()
         return authorization_token
+
+    @staticmethod
+    def check_internet():
+        internet_alive = False
+        for i in range(3):
+            try:
+                http = urllib3.PoolManager()
+                _ = http.request('GET', 'https://www.google.com')
+                internet_alive = True
+                break
+            except Exception:
+                print(f'No internet connection!!')
+
+        return internet_alive
 
 
 auth_token_helpers = AuthToken()

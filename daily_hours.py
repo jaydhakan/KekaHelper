@@ -49,10 +49,16 @@ class KekaDailyHoursCalculator:
                 headers = {
                     'authorization': f'{authorization_token}'
                 }
-                response = requests.get(url=url, headers=headers)
+                response = requests.get(url=url, headers=headers, timeout=10)
                 if self.check_if_valid_response(response):
                     return response
                 else:
+
+                    if not auth_token_helpers.check_internet():
+                        self.__notification(
+                            'Failed!!', 'No internet connection!!'
+                        )
+                        exit()
                     if not fetch_new_api_token and retry_count == 3:
                         return self.fetch_response(fetch_new_api_token=True)
                     print(
@@ -65,6 +71,9 @@ class KekaDailyHoursCalculator:
                         f'response: {response.status_code}, {response.text}'
                     )
             except Exception as err:
+                if not auth_token_helpers.check_internet():
+                    self.__notification('Failed!!', 'No internet connection!!')
+                    exit()
                 if not fetch_new_api_token and retry_count == 3:
                     return self.fetch_response(fetch_new_api_token=True)
                 print(

@@ -12,7 +12,6 @@ from util import auth_token_helpers
 class KekaExtraHoursCalculator:
     working_days = 0
     total_office_time = timedelta(hours=8, minutes=30)
-    min_office_time = timedelta(hours=8, minutes=20)
     daily_avg = timedelta(hours=0, minutes=0)
 
     current_month = datetime.now().month
@@ -27,7 +26,7 @@ class KekaExtraHoursCalculator:
 
         elif platform == 'win32':
             ctypes.windll.user32.MessageBoxW(0, message, title, 1)
-        sleep(2)
+        sleep(1)
 
     @staticmethod
     def check_if_valid_response(response):
@@ -60,7 +59,7 @@ class KekaExtraHoursCalculator:
                     self.__notification('Failed!!', 'No internet connection!!')
                     exit()
                 if not fetch_new_api_token:
-                    return self.fetch_response(fetch_new_api_token = True)
+                    return self.fetch_response(fetch_new_api_token=True)
                 print(
                     f'Failed to get response from Keka API call, '
                     f'response: {response.status_code}, {response.text}'
@@ -128,18 +127,9 @@ class KekaExtraHoursCalculator:
                     self.total_office_time
                 ))
 
-            notification_title_min, notification_message_min = (
-                self.calculate_extra_time_and_get_message(
-                    self.min_office_time
-                ))
-
-            self.__notification(
+            return self.__notification(
                 notification_title,
                 notification_message
-            )
-            return self.__notification(
-                notification_title_min,
-                notification_message_min
             )
         except Exception as error:
             print(f'Failed to calculate your extra hours, ERROR: {error}')

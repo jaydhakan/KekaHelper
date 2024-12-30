@@ -1,10 +1,8 @@
 import ctypes
 import subprocess
-import time
 from datetime import datetime, timedelta
-from json import dumps, loads
-from os.path import exists
 from sys import platform
+from time import sleep
 
 import requests
 
@@ -24,7 +22,7 @@ class KekaDailyHoursCalculator:
             subprocess.run(['notify-send', title, message])
         elif platform == 'win32':
             ctypes.windll.user32.MessageBoxW(0, message, title, 1)
-        time.sleep(1)
+        sleep(1)
 
     @staticmethod
     def check_if_valid_response(response):
@@ -90,7 +88,8 @@ class KekaDailyHoursCalculator:
             timestamp_obj = datetime.strptime(
                 time_str, '%Y-%m-%dT%H:%M:%S'
             )
-        except Exception:
+        except Exception as error:
+            print(f'ERROR: {error}')
             print(
                 f'I guess you are in work from home. ENJOIII!!!!!, '
                 'Converting string to datetime with modified format.'

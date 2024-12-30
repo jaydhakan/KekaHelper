@@ -22,10 +22,10 @@ class AuthToken:
 
         elif platform == 'win32':
             ctypes.windll.user32.MessageBoxW(0, message, title, 1)
-        sleep(1)
+            sleep(1)
 
     async def fetch_auth_token(self, playwright: Playwright):
-        if not self.check_internet():
+        if not self.is_internet_alive():
             self.__notification('Failed!!', 'No internet connection!!')
             exit()
         self.__notification(
@@ -37,6 +37,7 @@ class AuthToken:
             user_data_dir=chrome_path,
             headless=True
         )
+        auth_token = None
         try:
             print('Driver started\n\n')
             page = await browser.new_page()
@@ -60,13 +61,10 @@ class AuthToken:
             else:
                 self.__notification('Failure', 'Failed to get Auth Token')
                 raise Exception('Failed to get Auth Token')
-            await browser.close()
-            print('\nDriver closed\n\n')
-            return auth_token
         finally:
             await browser.close()
             print('\nDriver closed\n\n')
-            return None
+            return auth_token
 
     async def get_auth_token_dynamically(self):
         async with async_playwright() as playwright:
@@ -82,7 +80,7 @@ class AuthToken:
         return authorization_token
 
     @staticmethod
-    def check_internet():
+    def is_internet_alive():
         internet_alive = False
         for i in range(3):
             try:

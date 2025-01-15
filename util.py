@@ -7,7 +7,7 @@ from os.path import exists
 from sys import platform
 from time import sleep
 
-import urllib3
+import requests
 from playwright.async_api import Playwright, async_playwright
 
 
@@ -81,17 +81,13 @@ class AuthToken:
 
     @staticmethod
     def is_internet_alive():
-        internet_alive = False
         for i in range(3):
             try:
-                http = urllib3.PoolManager()
-                _ = http.request('GET', 'https://www.google.com')
-                internet_alive = True
-                break
+                _ = requests.get('https://www.google.com', timeout=5)
+                return True
             except Exception:
                 print(f'No internet connection!!')
-
-        return internet_alive
+        return False
 
 
 auth_token_helpers = AuthToken()

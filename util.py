@@ -73,7 +73,7 @@ class AuthToken:
     def read_auth_token_from_file(
         self, fetch_new_api_token: bool = False
     ) -> str:
-        if fetch_new_api_token:
+        if fetch_new_api_token and not exists(self.token_file_path):
             asyncio.run(self.get_auth_token_dynamically())
         with open(self.token_file_path, "r+") as token_file:
             authorization_token = token_file.read()

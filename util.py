@@ -43,7 +43,7 @@ class AuthToken:
             page = await browser.new_page()
             url = 'https://kevit.keka.com/#/me/attendance/logs'
             await page.goto(url)
-            sleep(2)
+            sleep(3)
             print('Site opened, fetching local storage data\n')
             auth_token = await page.evaluate(
                 'JSON.stringify(window.localStorage.getItem("access_token"))'
@@ -52,7 +52,7 @@ class AuthToken:
             if auth_token:
                 print(f'Successfully scraped auth token::\n{auth_token}\n')
                 if not exists(self.token_file_path):
-                    with open(self.token_file_path, "w") as token_file:
+                    with open(self.token_file_path, "w+") as token_file:
                         token_file.write(f'Bearer {auth_token}')
                 else:
                     with open(self.token_file_path, "r+") as token_file:

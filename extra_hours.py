@@ -1,139 +1,120 @@
-import ctypes
-import subprocess
 from datetime import datetime, timedelta
-from sys import platform
-from time import sleep
 
 import requests
 
-from util import auth_token_helpers
+from common_helpers import get_env_int, get_logger, notify_user
+from util import fetch_keka_response
+
+logger = get_logger(__name__)
 
 
 class KekaExtraHoursCalculator:
-    working_days = 0
-    total_office_time = timedelta(hours=8, minutes=30)
-    daily_avg = timedelta(hours=0, minutes=0)
+    request_timeout_seconds = get_env_int("KEKA_EXTRA_REQUEST_TIMEOUT_SECONDS", 10)
+    max_retries = get_env_int("KEKA_EXTRA_RETRY_COUNT", 3)
 
-    current_month = datetime.now().month
-    current_year = datetime.now().year
-    from_date = datetime(current_year, current_month, 1).strftime("%Y-%m-%d")
-    to_date = datetime.now().date() - timedelta(days=1)
-
-    @staticmethod
-    def __notification(title, message):
-        if platform == 'linux':
-            subprocess.run(['notify-send', title, message])
-
-        elif platform == 'win32':
-            ctypes.windll.user32.MessageBoxW(0, message, title, 1)
-        sleep(1)
+    def __init__(self) -> None:
+        self.working_days = 0
+        self.total_office_time = timedelta(hours=8, minutes=30)
+        self.daily_avg = timedelta(0)
+        now = datetime.now()
+        self.from_date = datetime(now.year, now.month, 1).strftime("%Y-%m-%d")
+        self.to_date = (now.date() - timedelta(days=1)).strftime("%Y-%m-%d")
 
     @staticmethod
-    def check_if_valid_response(response):
+    def check_if_valid_response(response: requests.Response) -> bool:
+        try:
+            payload = response.json()
+        except ValueError:
+            return False
         return (
             response.status_code == 200 and
-            'data' in response.json() and
-            'myStats' in response.json()['data'] and
-            'workingDays' in response.json()['data']['myStats'] and
-            'averageHoursPerDayInHHMM' in response.json()['data']['myStats']
+            isinstance(payload.get("data"), dict) and
+            isinstance(payload["data"].get("myStats"), dict) and
+            "workingDays" in payload["data"]["myStats"] and
+            "averageHoursPerDayInHHMM" in payload["data"]["myStats"]
         )
 
-    def fetch_response(self, fetch_new_api_token: bool = False):
-        try:
-            url = (
-                f'https://kevit.keka.com/k/attendance/api/mytime/attendance/'
-                f'lastweekstats?fromDate={self.from_date}&toDate={self.to_date}'
-            )
-            authorization_token = auth_token_helpers.read_auth_token_from_file(
-                fetch_new_api_token
-            )
-            print(f'Authorization_token:\n{authorization_token}\n')
-            headers = {
-                'authorization': f'{authorization_token}'
-            }
-            response = requests.get(url=url, headers=headers, timeout=5)
-            if self.check_if_valid_response(response):
-                return response
-            else:
-                if not fetch_new_api_token:
-                    return self.fetch_response(fetch_new_api_token=True)
-                print(
-                    f'Failed to get response from Keka API call, '
-                    f'response: {response.status_code}, {response.text}'
-                )
-                self.__notification(
-                    'Failed',
-                    f'Keka API call failed, '
-                    f'response: {response.status_code}, {response.text}'
-                )
-                exit()
-        except Exception as err:
-            if not auth_token_helpers.is_internet_alive():
-                self.__notification('Failed!!', 'No internet connection!!')
-                exit()
-            if not fetch_new_api_token:
-                return self.fetch_response(fetch_new_api_token=True)
-            print(
-                f'Unknown ERROR when getting response from Keka API call, '
-                f'ERROR: {err}'
-            )
-            self.__notification(
-                'ERROR', f'Keka API call failed, ERROR: {str(err)}'
-            )
-            exit()
+    def fetch_response(self) -> requests.Response:
+        url = (
+            "https://kevit.keka.com/k/attendance/api/mytime/attendance/"
+            f"lastweekstats?fromDate={self.from_date}&toDate={self.to_date}"
+        )
+        return fetch_keka_response(
+            url=url,
+            is_valid_response=self.check_if_valid_response,
+            request_timeout_seconds=self.request_timeout_seconds,
+            max_retries=self.max_retries,
+            context_name="Extra hours API",
+        )
 
-    def calculate_extra_time_and_get_message(self, office_time: timedelta):
-        extra_time = self.daily_avg - office_time
-        if self.daily_avg < office_time:
-            extra_time = office_time - self.daily_avg
+    @staticmethod
+    def parse_hhmm_text(value: str) -> timedelta:
+        if not value:
+            return timedelta(0)
+        if ":" in value:
+            try:
+                hours, minutes = value.split(":", maxsplit=1)
+                return timedelta(hours=int(hours), minutes=int(minutes))
+            except ValueError:
+                logger.warning(f"Invalid HH:MM value for average hours: {value}")
+                return timedelta(0)
 
-        total_seconds = extra_time.total_seconds()
-        extra_hours = int(total_seconds // 3600) * self.working_days
-        extra_minutes = int((total_seconds % 3600) // 60) * self.working_days
+        hours = 0
+        minutes = 0
+        for part in value.split():
+            if part.endswith("h"):
+                hours = int(part[:-1])
+            elif part.endswith("m"):
+                minutes = int(part[:-1])
+        return timedelta(hours=hours, minutes=minutes)
 
-        extra_time = timedelta(hours=extra_hours, minutes=extra_minutes)
+    @staticmethod
+    def format_timedelta(value: timedelta) -> str:
+        total_minutes = int(value.total_seconds() // 60)
+        hours, minutes = divmod(abs(total_minutes), 60)
+        return f"{hours}h {minutes}m"
 
-        notification_title = 'Extra Time Available'
+    def calculate_extra_time_and_get_message(
+        self, office_time: timedelta
+    ) -> tuple[str, str]:
+        delta_per_day = self.daily_avg - office_time
+        cumulative_delta = delta_per_day * self.working_days
+
+        notification_title = "Extra Time Available"
         notification_message = (
-            f'Extra time done till now: {extra_time}'
+            f"Extra time done till now: {self.format_timedelta(cumulative_delta)}"
         )
         if self.daily_avg < office_time:
-            notification_title = f'Extra time to make average {office_time}.'
+            notification_title = f"Extra time to make average {office_time}."
             notification_message = (
-                f'Extra time to be done: {extra_time}'
+                f"Extra time to be done: {self.format_timedelta(cumulative_delta)}"
             )
         return notification_title, notification_message
 
-    def fetch_your_extra_hours(self):
+    def _extract_summary_metrics(
+        self, response: requests.Response
+    ) -> tuple[int, timedelta]:
+        mystats = response.json()["data"]["myStats"]
+        working_days = int(mystats.get("workingDays", 0))
+        daily_avg = self.parse_hhmm_text(
+            mystats.get("averageHoursPerDayInHHMM", "0h 0m")
+        )
+        return working_days, daily_avg
+
+    def fetch_your_extra_hours(self) -> None:
         try:
             response = self.fetch_response()
-            mystats = response.json()['data']['myStats']
-            self.working_days = mystats.get('workingDays')
-            daily_avg = mystats.get('averageHoursPerDayInHHMM').split(' ')
-            daily_hours = int(daily_avg[0][:-1])
-
-            daily_minutes = 0
-            if len(daily_avg) > 1:
-                daily_minutes = int(daily_avg[1][:-1])
-            self.daily_avg = timedelta(
-                hours=daily_hours, minutes=daily_minutes
+            self.working_days, self.daily_avg = self._extract_summary_metrics(
+                response
             )
-
             notification_title, notification_message = (
                 self.calculate_extra_time_and_get_message(
                     self.total_office_time
                 ))
-
-            return self.__notification(
-                notification_title,
-                notification_message
-            )
+            notify_user(notification_title, notification_message)
         except Exception as error:
-            print(f'Failed to calculate your extra hours, ERROR: {error}')
-            self.__notification(
-                'ERROR', 'Failed to calculate your extra hours, '
-                         f'ERROR: {str(error)}'
-            )
+            logger.exception("Failed to calculate extra hours")
+            notify_user("ERROR", f"Failed to calculate your extra hours: {error}")
 
 
 extra_hours_calculator = KekaExtraHoursCalculator()

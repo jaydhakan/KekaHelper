@@ -2,8 +2,8 @@ from datetime import datetime, timedelta
 
 import requests
 
-from common_helpers import get_env_int, get_logger, notify_user
-from util import fetch_keka_response
+from keka_helper.common_helpers import get_env_int, get_logger, notify_user
+from keka_helper.util import fetch_keka_response
 
 logger = get_logger(__name__)
 
@@ -150,6 +150,3 @@ class KekaDailyHoursCalculator:
 
 
 daily_hours_calculator = KekaDailyHoursCalculator()
-
-if __name__ == '__main__':
-    daily_hours_calculator.calculate_daily_hours()

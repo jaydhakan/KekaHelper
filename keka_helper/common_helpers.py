@@ -1,9 +1,10 @@
 import ctypes
 import logging
-import os
 import subprocess
 from sys import platform
 from time import sleep
+
+from keka_helper.config import as_int, get_env
 
 if not logging.getLogger().handlers:
     logging.basicConfig(
@@ -20,9 +21,9 @@ logger = get_logger(__name__)
 
 
 def get_env_int(name: str, default: int, minimum: int = 1) -> int:
-    value = os.getenv(name, str(default)).strip()
+    value = get_env(name, str(default))
     try:
-        parsed = int(value)
+        parsed = as_int(value, default)
         if parsed < minimum:
             raise ValueError
         return parsed

@@ -6,13 +6,13 @@ from typing import Callable
 import requests
 from playwright.async_api import async_playwright, Playwright
 
-from common_helpers import get_env_int, get_logger, notify_user
+from keka_helper.common_helpers import get_env_int, get_logger, notify_user
 
 logger = get_logger(__name__)
 
 
 class AuthToken:
-    ROOT_DIR_PATH = Path(__file__).resolve().parent
+    ROOT_DIR_PATH = Path(__file__).resolve().parent.parent
     token_file_path = ROOT_DIR_PATH / "token_file.txt"
     chrome_profile_path = ROOT_DIR_PATH / "chrome-profile"
     internet_retry_count = get_env_int("KEKA_INTERNET_RETRY_COUNT", 3)
@@ -179,5 +179,3 @@ def run_keka_request_attempts(
 
 
 auth_token_helpers = AuthToken()
-if __name__ == '__main__':
-    auth_token_helpers.read_auth_token_from_file(fetch_new_api_token=True)

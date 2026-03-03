@@ -22,6 +22,7 @@ KekaHelper/
 2. `./venv/bin/pip install -r requirements.txt`
 3. `./venv/bin/playwright install chromium`
 4. Create `.env` (copy from `.env.example` and update values as needed)
+5. If token refresh keeps failing, set `KEKA_BROWSER_HEADLESS=0` in `.env` and run refresh once to complete Keka login in the browser window.
 
 ## Usage
 1. `./venv/bin/python -m keka_helper daily`

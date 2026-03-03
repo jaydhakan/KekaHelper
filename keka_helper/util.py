@@ -1,5 +1,4 @@
 import asyncio
-from json import loads
 from pathlib import Path
 from typing import Callable
 
@@ -23,16 +22,48 @@ class AuthToken:
     browser_wait_after_goto_ms = get_env_int(
         "KEKA_BROWSER_WAIT_AFTER_GOTO_MS", 3000
     )
+    browser_headless = bool(get_env_int("KEKA_BROWSER_HEADLESS", 1, minimum=0))
+    browser_login_wait_seconds = get_env_int(
+        "KEKA_BROWSER_LOGIN_WAIT_SECONDS", 120
+    )
+    browser_login_poll_ms = get_env_int("KEKA_BROWSER_LOGIN_POLL_MS", 1000)
+
+    @staticmethod
+    async def read_access_token(page) -> str | None:
+        token = await page.evaluate('window.localStorage.getItem("access_token")')
+        return token or None
+
+    async def wait_for_manual_login(self, page) -> str | None:
+        if self.browser_headless or "Account/Login" not in page.url:
+            return None
+
+        notify_user(
+            "Action required",
+            "Please complete Keka login in the opened browser window",
+        )
+        logger.info(
+            "Waiting for manual login token capture "
+            f"(timeout={self.browser_login_wait_seconds}s)"
+        )
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.browser_login_wait_seconds
+        while loop.time() < deadline:
+            token = await self.read_access_token(page)
+            if token:
+                return token
+            await page.wait_for_timeout(self.browser_login_poll_ms)
+        return None
 
     async def fetch_auth_token(self, playwright: Playwright) -> str:
         if not self.is_internet_alive():
             notify_user("Failed", "No internet connection")
             raise ConnectionError("No internet connection")
-
+        print(self.browser_headless)
         chromium = playwright.chromium
         browser = await chromium.launch_persistent_context(
             user_data_dir=str(self.chrome_profile_path),
-            headless=True,
+            headless=self.browser_headless,
         )
 
         try:
@@ -46,18 +77,28 @@ class AuthToken:
             )
             await page.wait_for_timeout(self.browser_wait_after_goto_ms)
 
-            auth_token = await page.evaluate(
-                'JSON.stringify(window.localStorage.getItem("access_token"))'
-            )
-            auth_token = loads(auth_token)
+            auth_token = await self.read_access_token(page)
+            if not auth_token:
+                auth_token = await self.wait_for_manual_login(page)
             if auth_token:
                 token_value = f"Bearer {auth_token}"
                 self.token_file_path.write_text(token_value, encoding="utf-8")
                 logger.info("Auth token refreshed and written to token_file.txt")
                 return token_value
 
+            if "Account/Login" in page.url:
+                notify_user("Failure", "Keka login required to refresh auth token")
+                raise RuntimeError(
+                    "Keka session missing in chrome-profile. "
+                    "Run refresh with KEKA_BROWSER_HEADLESS=0, "
+                    "complete login once, then retry."
+                )
+
             notify_user("Failure", "Failed to get auth token")
-            raise RuntimeError("Failed to get auth token from browser storage")
+            raise RuntimeError(
+                "Failed to get auth token from browser storage "
+                f"(url={page.url})"
+            )
         finally:
             await browser.close()
             logger.info("Browser session closed")

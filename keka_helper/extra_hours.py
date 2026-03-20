@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from calendar import monthrange
 
 import requests
 
@@ -74,20 +75,68 @@ class KekaExtraHoursCalculator:
         hours, minutes = divmod(abs(total_minutes), 60)
         return f"{hours}h {minutes}m"
 
+    @staticmethod
+    def _remaining_weekdays_in_month(today: datetime) -> int:
+        last_day = monthrange(today.year, today.month)[1]
+        remaining_days = 0
+        for day in range(today.day, last_day + 1):
+            current = datetime(today.year, today.month, day)
+            if current.weekday() < 5:  # Mon-Fri
+                remaining_days += 1
+        return remaining_days
+
+    @staticmethod
+    def _format_minutes_as_timedelta(total_minutes: int) -> str:
+        if total_minutes < 0:
+            total_minutes = 0
+        hours, minutes = divmod(total_minutes, 60)
+        return f"{hours}h {minutes}m"
+
     def calculate_extra_time_and_get_message(
         self, office_time: timedelta
     ) -> tuple[str, str]:
         delta_per_day = self.daily_avg - office_time
         cumulative_delta = delta_per_day * self.working_days
+        today = datetime.now()
+        remaining_working_days = self._remaining_weekdays_in_month(today)
 
-        notification_title = "Extra Time Available"
-        notification_message = (
-            f"Extra time done till now: {self.format_timedelta(cumulative_delta)}"
-        )
-        if self.daily_avg < office_time:
-            notification_title = f"Extra time to make average {office_time}."
+        if remaining_working_days > 0:
+            office_minutes = int(office_time.total_seconds() // 60)
+            cumulative_delta_minutes = int(cumulative_delta.total_seconds() // 60)
+            required_per_day_minutes = office_minutes - (
+                cumulative_delta_minutes // remaining_working_days
+            )
+            required_per_day_minutes = max(required_per_day_minutes, 7 * 60)
+            per_day_text = self._format_minutes_as_timedelta(required_per_day_minutes)
+            if cumulative_delta >= timedelta(0):
+                daily_message = (
+                    "You can leave every day by doing {per_day_text}."
+                )
+            else:
+                daily_message = (
+                    f"To reach average, do {per_day_text} "
+                    "every remaining working day."
+                )
+        else:
+            daily_message = "No remaining working days in this month."
+
+        if cumulative_delta >= timedelta(0):
+            notification_title = (
+                f"{self.format_timedelta(cumulative_delta)} extra time available"
+            )
             notification_message = (
-                f"Extra time to be done: {self.format_timedelta(cumulative_delta)}"
+                f"{daily_message}\n"
+                f"Current average: {self.format_timedelta(self.daily_avg)}"
+            )
+        else:
+            time_to_reach_avg = abs(cumulative_delta)
+            notification_title = (
+                f"{self.format_timedelta(time_to_reach_avg)} "
+                "remaining to reach average"
+            )
+            notification_message = (
+                f"{daily_message}\n"
+                f"Current average: {self.format_timedelta(self.daily_avg)}"
             )
         return notification_title, notification_message
 

@@ -102,17 +102,43 @@ class KekaDailyHoursCalculator:
             return timedelta(0)
         return time_spent
 
+    @staticmethod
+    def _format_remaining_duration(remaining: timedelta) -> str:
+        if remaining <= timedelta(0):
+            return "0h 0m"
+        total_minutes = int(remaining.total_seconds() // 60)
+        hours, minutes = divmod(total_minutes, 60)
+        return f"{hours}h {minutes}m"
+
     def _build_notification(
-        self, now: datetime, total_time_leave: str, partial_time_leave: str
+        self,
+        total_time_leave: str,
+        partial_time_leave: str,
+        total_remaining: timedelta,
+        partial_remaining: timedelta,
     ) -> tuple[str, str]:
-        current_time = now.strftime(self.datetime_format_12_hour)
-        title = f"Office Time Reminder. Time ~ {current_time}"
-        message = f"You can close at {total_time_leave} or {partial_time_leave}."
+        if partial_remaining > timedelta(0):
+            title = (
+                f"{self._format_remaining_duration(partial_remaining)} "
+                "remaining for min time"
+            )
+        elif total_remaining > timedelta(0):
+            title = (
+                f"{self._format_remaining_duration(total_remaining)} "
+                "remaining for full time"
+            )
+        else:
+            title = "Full time completed"
+
+        message = (
+            f"Min time: {partial_time_leave}\n"
+            f"Full time: {total_time_leave}"
+        )
         return title, message
 
     def _format_leave_time(self, now: datetime, remaining: timedelta) -> str:
         if remaining <= timedelta(0):
-            return "now"
+            return "Completed"
         return (now + remaining).strftime(self.datetime_format_12_hour)
 
     def calculate_daily_hours(self) -> None:
@@ -136,7 +162,10 @@ class KekaDailyHoursCalculator:
             total_time_leave = self._format_leave_time(now, total_remaining)
             partial_time_leave = self._format_leave_time(now, partial_remaining)
             notification_title, notification_message = self._build_notification(
-                now, total_time_leave, partial_time_leave
+                total_time_leave,
+                partial_time_leave,
+                total_remaining,
+                partial_remaining,
             )
 
             logger.info(

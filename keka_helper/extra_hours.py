@@ -110,7 +110,7 @@ class KekaExtraHoursCalculator:
             per_day_text = self._format_minutes_as_timedelta(required_per_day_minutes)
             if cumulative_delta >= timedelta(0):
                 daily_message = (
-                    "You can leave every day by doing {per_day_text}."
+                    f"You can leave every day by doing {per_day_text}."
                 )
             else:
                 daily_message = (

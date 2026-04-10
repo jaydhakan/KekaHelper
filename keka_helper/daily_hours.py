@@ -110,6 +110,14 @@ class KekaDailyHoursCalculator:
         hours, minutes = divmod(total_minutes, 60)
         return f"{hours}h {minutes}m"
 
+    @staticmethod
+    def _format_extra_duration(extra: timedelta) -> str:
+        if extra <= timedelta(0):
+            return "0h 0m"
+        total_minutes = int(extra.total_seconds() // 60)
+        hours, minutes = divmod(total_minutes, 60)
+        return f"{hours}h {minutes}m"
+
     def _build_notification(
         self,
         total_time_leave: str,
@@ -128,7 +136,11 @@ class KekaDailyHoursCalculator:
                 "remaining for full time"
             )
         else:
-            title = "Full time completed"
+            extra_time = abs(total_remaining)
+            title = (
+                "Full time completed"
+                f" - {self._format_extra_duration(extra_time)} extra"
+            )
 
         message = (
             f"Min time: {partial_time_leave}\n"

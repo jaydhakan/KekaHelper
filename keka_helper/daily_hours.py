@@ -43,7 +43,8 @@ class KekaDailyHoursCalculator:
             context_name="Daily hours API",
         )
 
-    def convert_str_to_datetime(self, time_str: str) -> datetime:
+    @staticmethod
+    def convert_str_to_datetime(time_str: str) -> datetime:
         normalized = time_str.strip().replace("Z", "+00:00")
         try:
             parsed = datetime.fromisoformat(normalized)
@@ -61,17 +62,8 @@ class KekaDailyHoursCalculator:
         raise ValueError(f"Unsupported timestamp format: {time_str}")
 
     @staticmethod
-    def parse_break_duration(value: str) -> timedelta:
-        if not value:
-            return timedelta(0)
-        parts = value.split(":")
-        if len(parts) != 2:
-            return timedelta(0)
-        try:
-            return timedelta(hours=int(parts[0]), minutes=int(parts[1]))
-        except ValueError:
-            logger.warning(f"Invalid break duration format: {value}")
-            return timedelta(0)
+    def parse_break_duration(value: int | float) -> timedelta:
+        return timedelta(minutes=round(float(value) * 60))
 
     @staticmethod
     def is_half_day(last_entry: dict):
@@ -161,7 +153,7 @@ class KekaDailyHoursCalculator:
                 last_entry
             )
             break_time = self.parse_break_duration(
-                last_entry.get("breakDurationInHHMM", "0:0")
+                last_entry.get("totalBreakDuration", "0:0")
             )
             first_log = self._get_first_log_time(last_entry)
             now = datetime.now()

@@ -2,7 +2,13 @@ from datetime import datetime, timedelta
 
 import requests
 
-from keka_helper.common_helpers import get_env_int, get_logger, notify_user
+from keka_helper.common_helpers import (
+    convert_str_to_datetime,
+    format_timedelta,
+    get_env_int,
+    get_logger,
+    notify_user,
+)
 from keka_helper.util import fetch_keka_response
 
 logger = get_logger(__name__)
@@ -44,29 +50,11 @@ class KekaDailyHoursCalculator:
         )
 
     @staticmethod
-    def convert_str_to_datetime(time_str: str) -> datetime:
-        normalized = time_str.strip().replace("Z", "+00:00")
-        try:
-            parsed = datetime.fromisoformat(normalized)
-            if parsed.tzinfo:
-                return parsed.astimezone().replace(tzinfo=None)
-            return parsed
-        except ValueError:
-            pass
-
-        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
-            try:
-                return datetime.strptime(time_str[:19], fmt)
-            except ValueError:
-                continue
-        raise ValueError(f"Unsupported timestamp format: {time_str}")
-
-    @staticmethod
     def parse_break_duration(value: int | float) -> timedelta:
         return timedelta(minutes=round(float(value) * 60))
 
     @staticmethod
-    def is_half_day(last_entry: dict):
+    def is_half_day(last_entry: dict) -> bool:
         return (
             last_entry.get('isFirstHalfLeave', False) or
             last_entry.get('isSecondHalfLeave', False)
@@ -79,11 +67,12 @@ class KekaDailyHoursCalculator:
             return self.half_day_total_office_time, self.half_day_partial_office_time
         return self.total_office_time, self.partial_office_time
 
-    def _get_first_log_time(self, last_entry: dict) -> datetime:
+    @staticmethod
+    def _get_first_log_time(last_entry: dict) -> datetime:
         entries = last_entry.get("originalTimeEntries", [])
         if not entries:
             raise RuntimeError("No time entries found for today")
-        return self.convert_str_to_datetime(entries[0]["actualTimestamp"])
+        return convert_str_to_datetime(entries[0]["actualTimestamp"])
 
     @staticmethod
     def _calculate_effective_time_spent(
@@ -94,56 +83,30 @@ class KekaDailyHoursCalculator:
             return timedelta(0)
         return time_spent
 
-    @staticmethod
-    def _format_remaining_duration(remaining: timedelta) -> str:
+    def _format_leave_time(self, now: datetime, remaining: timedelta) -> str:
         if remaining <= timedelta(0):
-            return "0h 0m"
-        total_minutes = int(remaining.total_seconds() // 60)
-        hours, minutes = divmod(total_minutes, 60)
-        return f"{hours}h {minutes}m"
+            return "Completed"
+        return (now + remaining).strftime(self.datetime_format_12_hour)
 
     @staticmethod
-    def _format_extra_duration(extra: timedelta) -> str:
-        if extra <= timedelta(0):
-            return "0h 0m"
-        total_minutes = int(extra.total_seconds() // 60)
-        hours, minutes = divmod(total_minutes, 60)
-        return f"{hours}h {minutes}m"
-
     def _build_notification(
-        self,
         total_time_leave: str,
         partial_time_leave: str,
         total_remaining: timedelta,
         partial_remaining: timedelta,
     ) -> tuple[str, str]:
         if partial_remaining > timedelta(0):
-            title = (
-                f"{self._format_remaining_duration(partial_remaining)} "
-                "remaining for min time"
-            )
+            title = f"{format_timedelta(partial_remaining)} remaining for min time"
         elif total_remaining > timedelta(0):
-            title = (
-                f"{self._format_remaining_duration(total_remaining)} "
-                "remaining for full time"
-            )
+            title = f"{format_timedelta(total_remaining)} remaining for full time"
         else:
-            extra_time = abs(total_remaining)
-            title = (
-                "Full time completed"
-                f" - {self._format_extra_duration(extra_time)} extra"
-            )
+            title = f"Full time completed - {format_timedelta(abs(total_remaining))} extra"
 
         message = (
             f"Min time: {partial_time_leave}\n"
             f"Full time: {total_time_leave}"
         )
         return title, message
-
-    def _format_leave_time(self, now: datetime, remaining: timedelta) -> str:
-        if remaining <= timedelta(0):
-            return "Completed"
-        return (now + remaining).strftime(self.datetime_format_12_hour)
 
     def calculate_daily_hours(self) -> None:
         try:
@@ -157,9 +120,7 @@ class KekaDailyHoursCalculator:
             )
             first_log = self._get_first_log_time(last_entry)
             now = datetime.now()
-            time_spent = self._calculate_effective_time_spent(
-                now, first_log, break_time
-            )
+            time_spent = self._calculate_effective_time_spent(now, first_log, break_time)
 
             total_remaining = total_office_time - time_spent
             partial_remaining = partial_office_time - time_spent

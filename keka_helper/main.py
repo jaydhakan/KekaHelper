@@ -2,7 +2,7 @@ import argparse
 from typing import Callable
 
 from keka_helper.daily_hours import daily_hours_calculator
-from keka_helper.extra_hours import extra_hours_calculator
+from keka_helper.extra_hours import extra_hours_calculator, extra_hours_calculator_v2
 from keka_helper.util import auth_token_helpers
 
 
@@ -12,6 +12,10 @@ def run_daily() -> None:
 
 def run_extra() -> None:
     extra_hours_calculator.fetch_your_extra_hours()
+
+
+def run_extra_v2() -> None:
+    extra_hours_calculator_v2.fetch_your_extra_hours()
 
 
 def run_refresh_token() -> None:
@@ -26,6 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("daily", help="Show daily checkout windows")
     subparsers.add_parser("extra", help="Show monthly extra-hours summary")
+    subparsers.add_parser(
+        "extra-v2",
+        help="Show monthly extra-hours summary (via daily API, dayType=0 only)"
+    )
     subparsers.add_parser("refresh-token", help="Refresh Keka auth token")
     return parser
 
@@ -37,6 +45,7 @@ def main() -> None:
     command_handlers: dict[str, Callable[[], None]] = {
         "daily": run_daily,
         "extra": run_extra,
+        "extra-v2": run_extra_v2,
         "refresh-token": run_refresh_token,
     }
     command_handlers[args.command]()

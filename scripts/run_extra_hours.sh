@@ -5,4 +5,4 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
-exec "$PROJECT_DIR/venv/bin/python" -m keka_helper extra
+exec "$PROJECT_DIR/venv/bin/python" -m keka_helper extra-v2

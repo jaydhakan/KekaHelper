@@ -87,15 +87,15 @@ def remaining_weekdays_in_month(today: datetime) -> int:
 def build_extra_hours_notification(
     working_days: int,
     total_effective: timedelta,
-    office_time: timedelta,
+    total_required: timedelta,
+    default_office_time: timedelta,
 ) -> tuple[str, str]:
-    required_total = office_time * working_days
-    delta = total_effective - required_total
+    delta = total_effective - total_required
     avg = total_effective / working_days if working_days > 0 else timedelta(0)
     remaining_days = remaining_weekdays_in_month(datetime.now())
 
     if remaining_days > 0:
-        office_minutes = int(office_time.total_seconds() // 60)
+        office_minutes = int(default_office_time.total_seconds() // 60)
         delta_minutes = int(delta.total_seconds() // 60)
         required_per_day_minutes = office_minutes - round(delta_minutes / remaining_days)
         required_per_day_minutes = max(required_per_day_minutes, 7 * 60)

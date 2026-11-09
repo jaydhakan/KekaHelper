@@ -7,6 +7,7 @@ from keka_helper.common_helpers import (
     build_extra_hours_notification,
     get_env_int,
     get_logger,
+    is_half_day_entry,
     notify_user,
     parse_hhmm_text,
 )
@@ -141,20 +142,25 @@ class KekaExtraHoursCalculatorV2:
         )
 
     def _calculate_monthly_stats(self, entries: list) -> tuple[int, timedelta, timedelta]:
+        yesterday = (datetime.now() - timedelta(days=1)).date()
         working_days = 0
         total_effective = timedelta(0)
         total_required = timedelta(0)
         for entry in entries:
+            attendance_date_str = entry.get("attendanceDate", "")
+            if attendance_date_str:
+                attendance_date = datetime.fromisoformat(
+                    attendance_date_str.replace("Z", "+00:00")
+                ).date()
+                if attendance_date > yesterday:
+                    continue
             if entry.get("dayType") not in self.counted_day_types:
                 continue
+            working_days += 1
             effective = parse_hhmm_text(entry.get("effectiveHoursInHHMM", "0h 0m"))
             if effective == timedelta(0):
                 continue
-            is_half_day = (
-                entry.get("isFirstHalfLeave", False) or
-                entry.get("isSecondHalfLeave", False)
-            )
-            working_days += 1
+            is_half_day = is_half_day_entry(entry)
             total_effective += effective
             total_required += self.half_day_office_time if is_half_day else self.daily_office_time
         return working_days, total_effective, total_required

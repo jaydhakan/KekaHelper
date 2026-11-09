@@ -7,6 +7,7 @@ from keka_helper.common_helpers import (
     format_timedelta,
     get_env_int,
     get_logger,
+    is_half_day_entry,
     notify_user,
 )
 from keka_helper.util import fetch_keka_response
@@ -55,10 +56,7 @@ class KekaDailyHoursCalculator:
 
     @staticmethod
     def is_half_day(last_entry: dict) -> bool:
-        return (
-            last_entry.get('isFirstHalfLeave', False) or
-            last_entry.get('isSecondHalfLeave', False)
-        )
+        return is_half_day_entry(last_entry)
 
     def _get_office_time_targets(
         self, last_entry: dict

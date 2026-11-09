@@ -115,7 +115,7 @@ def build_extra_hours_notification(
 
     message = (
         f"{daily_message}\n"
-        f"Days counted: {working_days} | Avg: {format_timedelta(avg)}"
+        f"Working days: {working_days} | Avg: {format_timedelta(avg)}"
     )
     return title, message
 
@@ -135,3 +135,19 @@ def convert_str_to_datetime(time_str: str) -> datetime:
         except ValueError:
             continue
     raise ValueError(f"Unsupported timestamp format: {time_str}")
+
+
+HALF_DAY_SHIFT_MAX_HOURS = 4.25
+
+
+def is_half_day_entry(entry: dict) -> bool:
+    """Half day can come from a half-day leave or from a half-day shift policy."""
+    if entry.get("isFirstHalfLeave") or entry.get("isSecondHalfLeave"):
+        return True
+    if "half day" in (entry.get("shiftPolicyName") or "").lower():
+        return True
+    shift_effective = entry.get("shiftEffectiveDuration")
+    return (
+        isinstance(shift_effective, (int, float)) and
+        0 < shift_effective <= HALF_DAY_SHIFT_MAX_HOURS
+    )

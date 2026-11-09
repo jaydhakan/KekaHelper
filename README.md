@@ -26,7 +26,7 @@ KekaHelper/
 
 ## Usage
 1. `./venv/bin/python -m keka_helper daily`
-2. `./venv/bin/python -m keka_helper extra`
+2. `./venv/bin/python -m keka_helper extra` (`extra-v2` still works as an alias)
 3. `./venv/bin/python -m keka_helper refresh-token`
 
 ## Shortcut Scripts

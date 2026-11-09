@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import requests
 
@@ -7,12 +7,16 @@ from keka_helper.common_helpers import (
     format_timedelta,
     get_env_int,
     get_logger,
-    is_half_day_entry,
+    get_required_office_time,
     notify_user,
+    parse_entry_date,
 )
 from keka_helper.util import fetch_keka_response
 
 logger = get_logger(__name__)
+
+PUNCH_IN = 0
+PUNCH_OUT = 1
 
 
 class KekaDailyHoursCalculator:
@@ -35,9 +39,7 @@ class KekaDailyHoursCalculator:
         return (
             response.status_code == 200 and
             isinstance(data, list) and
-            len(data) > 0 and
-            isinstance(data[-1], dict) and
-            "breakDurationInHHMM" in data[-1]
+            len(data) > 0
         )
 
     def fetch_response(self) -> requests.Response:
@@ -51,35 +53,57 @@ class KekaDailyHoursCalculator:
         )
 
     @staticmethod
-    def parse_break_duration(value: int | float) -> timedelta:
-        return timedelta(minutes=round(float(value) * 60))
+    def _get_today_entry(entries: list, today: date) -> dict:
+        for entry in reversed(entries):
+            if parse_entry_date(entry) == today:
+                return entry
+        raise RuntimeError(f"No attendance entry for today ({today:%d %b %Y}) in Keka response")
+
+    def _get_office_time_targets(self, entry: dict) -> tuple[timedelta, timedelta]:
+        """Full/min targets from Keka's shift length; min time scales with the shift."""
+        total = get_required_office_time(entry)
+        if total <= timedelta(0):
+            raise RuntimeError("Today is marked as a full-day leave")
+        if total <= self.half_day_total_office_time:
+            partial = self.half_day_partial_office_time * (total / self.half_day_total_office_time)
+        else:
+            partial = self.partial_office_time * (total / self.total_office_time)
+        return total, timedelta(minutes=round(partial.total_seconds() / 60))
 
     @staticmethod
-    def is_half_day(last_entry: dict) -> bool:
-        return is_half_day_entry(last_entry)
-
-    def _get_office_time_targets(
-        self, last_entry: dict
-    ) -> tuple[timedelta, timedelta]:
-        if self.is_half_day(last_entry):
-            return self.half_day_total_office_time, self.half_day_partial_office_time
-        return self.total_office_time, self.partial_office_time
-
-    @staticmethod
-    def _get_first_log_time(last_entry: dict) -> datetime:
-        entries = last_entry.get("originalTimeEntries", [])
-        if not entries:
+    def _get_punches(entry: dict) -> list[tuple[datetime, int]]:
+        raw_entries = entry.get("timeEntries") or entry.get("originalTimeEntries") or []
+        punches = [
+            (
+                convert_str_to_datetime(
+                    raw.get("adjustedTimestamp") or raw.get("timestamp") or raw["actualTimestamp"]
+                ),
+                raw.get("punchStatus"),
+            )
+            for raw in raw_entries
+            if not raw.get("isDeleted")
+        ]
+        if not punches:
             raise RuntimeError("No time entries found for today")
-        return convert_str_to_datetime(entries[0]["actualTimestamp"])
+        return sorted(punches, key=lambda punch: punch[0])
 
     @staticmethod
     def _calculate_effective_time_spent(
-        now: datetime, first_log: datetime, break_time: timedelta
-    ) -> timedelta:
-        time_spent = now - first_log - break_time
-        if time_spent < timedelta(0):
-            return timedelta(0)
-        return time_spent
+        punches: list[tuple[datetime, int]], now: datetime
+    ) -> tuple[timedelta, bool]:
+        """Sum of in->out pairs, plus the open session if currently punched in."""
+        worked = timedelta(0)
+        current_in: datetime | None = None
+        for timestamp, status in punches:
+            if status == PUNCH_IN and current_in is None:
+                current_in = timestamp
+            elif status == PUNCH_OUT and current_in is not None:
+                worked += timestamp - current_in
+                current_in = None
+        is_punched_in = current_in is not None
+        if is_punched_in:
+            worked += max(now - current_in, timedelta(0))
+        return worked, is_punched_in
 
     def _format_leave_time(self, now: datetime, remaining: timedelta) -> str:
         if remaining <= timedelta(0):
@@ -92,6 +116,7 @@ class KekaDailyHoursCalculator:
         partial_time_leave: str,
         total_remaining: timedelta,
         partial_remaining: timedelta,
+        is_punched_in: bool = True,
     ) -> tuple[str, str]:
         if partial_remaining > timedelta(0):
             title = f"{format_timedelta(partial_remaining)} remaining for min time"
@@ -104,21 +129,19 @@ class KekaDailyHoursCalculator:
             f"Min time: {partial_time_leave}\n"
             f"Full time: {total_time_leave}"
         )
+        if not is_punched_in:
+            message += "\nYou are punched out - times assume you punch in now"
         return title, message
 
     def calculate_daily_hours(self) -> None:
         try:
-            response = self.fetch_response()
-            last_entry = response.json()["data"][-1]
-            total_office_time, partial_office_time = self._get_office_time_targets(
-                last_entry
-            )
-            break_time = self.parse_break_duration(
-                last_entry.get("totalBreakDuration", "0:0")
-            )
-            first_log = self._get_first_log_time(last_entry)
             now = datetime.now()
-            time_spent = self._calculate_effective_time_spent(now, first_log, break_time)
+            entries = self.fetch_response().json()["data"]
+            entry = self._get_today_entry(entries, now.date())
+            total_office_time, partial_office_time = self._get_office_time_targets(entry)
+            time_spent, is_punched_in = self._calculate_effective_time_spent(
+                self._get_punches(entry), now
+            )
 
             total_remaining = total_office_time - time_spent
             partial_remaining = partial_office_time - time_spent
@@ -129,11 +152,12 @@ class KekaDailyHoursCalculator:
                 partial_time_leave,
                 total_remaining,
                 partial_remaining,
+                is_punched_in,
             )
 
             logger.info(
-                f"Computed leave windows total={total_time_leave} "
-                f"partial={partial_time_leave}"
+                f"Computed leave windows spent={format_timedelta(time_spent)} "
+                f"total={total_time_leave} partial={partial_time_leave}"
             )
             notify_user(notification_title, notification_message)
         except Exception as err:

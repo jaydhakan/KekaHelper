@@ -3,7 +3,8 @@ import logging
 import os
 import subprocess
 from calendar import monthrange
-from datetime import datetime, timedelta
+from collections.abc import Collection, Sequence
+from datetime import date, datetime, timedelta
 from sys import platform
 from time import sleep
 
@@ -75,11 +76,13 @@ def parse_hhmm_text(value: str) -> timedelta:
     return timedelta(hours=hours, minutes=minutes)
 
 
-def remaining_weekdays_in_month(today: datetime) -> int:
+def remaining_working_days_in_month(today: date, holidays: Collection[date] = ()) -> int:
+    """Mon-Fri days from today to month end, excluding company holidays."""
     last_day = monthrange(today.year, today.month)[1]
     count = 0
     for day in range(today.day, last_day + 1):
-        if datetime(today.year, today.month, day).weekday() < 5:
+        current = date(today.year, today.month, day)
+        if current.weekday() < 5 and current not in holidays:
             count += 1
     return count
 
@@ -89,10 +92,11 @@ def build_extra_hours_notification(
     total_effective: timedelta,
     total_required: timedelta,
     default_office_time: timedelta,
+    remaining_days: int,
+    missing_punch_days: Sequence[date] = (),
 ) -> tuple[str, str]:
     delta = total_effective - total_required
     avg = total_effective / working_days if working_days > 0 else timedelta(0)
-    remaining_days = remaining_weekdays_in_month(datetime.now())
 
     if remaining_days > 0:
         office_minutes = int(default_office_time.total_seconds() // 60)
@@ -117,6 +121,10 @@ def build_extra_hours_notification(
         f"{daily_message}\n"
         f"Working days: {working_days} | Avg: {format_timedelta(avg)}"
     )
+    if missing_punch_days:
+        dates_text = ", ".join(day.strftime("%d %b") for day in missing_punch_days)
+        plural = "s" if len(missing_punch_days) > 1 else ""
+        message += f"\n\u26a0 {len(missing_punch_days)} day{plural} with missing punch: {dates_text}"
     return title, message
 
 
@@ -137,17 +145,47 @@ def convert_str_to_datetime(time_str: str) -> datetime:
     raise ValueError(f"Unsupported timestamp format: {time_str}")
 
 
-HALF_DAY_SHIFT_MAX_HOURS = 4.25
+STANDARD_SHIFT_HOURS = 8.5
+FULL_DAY_LEAVE_STATUS = 1
 
 
-def is_half_day_entry(entry: dict) -> bool:
-    """Half day can come from a half-day leave or from a half-day shift policy."""
-    if entry.get("isFirstHalfLeave") or entry.get("isSecondHalfLeave"):
+def parse_entry_date(entry: dict) -> date | None:
+    value = entry.get("attendanceDate")
+    if not value:
+        return None
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+
+
+def is_half_day_leave(entry: dict) -> bool:
+    return bool(entry.get("isFirstHalfLeave") or entry.get("isSecondHalfLeave"))
+
+
+def is_full_day_leave(entry: dict) -> bool:
+    if is_half_day_leave(entry):
+        return False
+    if FULL_DAY_LEAVE_STATUS in (entry.get("leaveDayStatuses") or []):
         return True
-    if "half day" in (entry.get("shiftPolicyName") or "").lower():
-        return True
-    shift_effective = entry.get("shiftEffectiveDuration")
-    return (
-        isinstance(shift_effective, (int, float)) and
-        0 < shift_effective <= HALF_DAY_SHIFT_MAX_HOURS
+    return any(
+        leave.get("leaveDayStatus") == FULL_DAY_LEAVE_STATUS and not leave.get("isHourlyLeave")
+        for leave in entry.get("leaveDetails") or []
     )
+
+
+def has_missing_punch(entry: dict) -> bool:
+    return bool(entry.get("isInMissing") or entry.get("isAnomalyDetected"))
+
+
+def get_required_office_time(entry: dict) -> timedelta:
+    """Required effective time for a day, based on Keka's own shift length.
+
+    Half-day shifts come through as a shorter shiftEffectiveDuration (e.g. 4.25);
+    half-day leave keeps the normal shift, so it is capped at half a standard day.
+    """
+    if is_full_day_leave(entry):
+        return timedelta(0)
+    shift_hours = entry.get("shiftEffectiveDuration")
+    if not isinstance(shift_hours, (int, float)) or shift_hours <= 0:
+        shift_hours = STANDARD_SHIFT_HOURS
+    if is_half_day_leave(entry):
+        shift_hours = min(shift_hours, STANDARD_SHIFT_HOURS / 2)
+    return timedelta(minutes=round(shift_hours * 60))
